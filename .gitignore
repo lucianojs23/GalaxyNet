@@ -1,0 +1,18 @@
+# Ambiente virtual
+galaxy_env/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Dados grandes (não versionar)
+data/raw/*.csv
+data/raw/*.fits
+data/images/*.npy
+data/images/*.png
+
+# Modelos treinados
+models/*.h5
+models/*.keras
+
+# Sistema
+.DS_Store
