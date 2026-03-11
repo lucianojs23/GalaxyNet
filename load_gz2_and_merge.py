@@ -67,6 +67,3 @@ print(f"  Shape: {merged_df.shape}")
 print(f"\nColunas disponíveis:")
 print(f"  {list(merged_df.columns)}")
 
-print("\nPróximo passo:")
-print("  git add data/processed/merged_catalog.csv")
-print("  git commit -m 'data: merge SDSS + GZ2 concluído'")

@@ -4,9 +4,6 @@ import pandas as pd
 from astroquery.sdss import SDSS
 from astropy.coordinates import SkyCoord
 import astropy.units as u
-import numpy as np
-from astropy.io import fits
-from tqdm import tqdm
 import os
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -27,6 +24,7 @@ def download_sdss_galaxy_data(ra_center, dec_center, radius_deg,
     Returns:
         pd.DataFrame: DataFrame containing the downloaded galaxy data.
     """
+    # SQL query to select relevant galaxy properties
     query = f"""
     SELECT TOP {max_records}
         p.objid, p.ra, p.dec,
@@ -47,6 +45,7 @@ def download_sdss_galaxy_data(ra_center, dec_center, radius_deg,
         dbo.fDistanceArcMinEq(p.ra, p.dec, {ra_center}, {dec_center}) < {radius_deg * 60}
     """
 
+    # Execute the query
     result = SDSS.query_sql(query)
 
     if result is not None:
@@ -70,6 +69,7 @@ def save_sdss_data(df, filename="sdss_galaxies.csv", raw_dir=None):
         df        (pd.DataFrame): DataFrame retornado por download_sdss_galaxy_data.
         filename         (str): Nome do arquivo CSV de saída.
         raw_dir          (str): Caminho para o diretório raw/.
+                                Se None, usa '../data/raw' relativo a este arquivo.
     """
     if raw_dir is None:
         raw_dir = os.path.join(os.path.dirname(__file__), "..", "data", "raw")
@@ -80,7 +80,6 @@ def save_sdss_data(df, filename="sdss_galaxies.csv", raw_dir=None):
     print(f"Dados salvos em: {out_path}")
     return out_path
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Carregamento e Filtragem de Dados do Galaxy Zoo 2
 # ─────────────────────────────────────────────────────────────────────────────
@@ -89,20 +88,16 @@ def load_and_filter_gz2(file_path="gz2_hart16.csv"):
     """
     Loads the Galaxy Zoo 2 dataset and filters relevant columns for classification.
 
-    O arquivo gz2_hart16.csv contém as colunas 'ra', 'dec' e 'dr7objid'.
-    O merge com o SDSS é feito via cruzamento espacial por coordenadas (ra, dec),
-    pois o GZ2 usa objids do DR7 enquanto o SDSS foi baixado no DR17.
-
     Args:
-        file_path (str): Caminho para o arquivo gz2_hart16.csv.
+        file_path (str): Path to the gz2_hart16.csv file.
 
     Returns:
-        pd.DataFrame: DataFrame filtrado com classificações do GZ2.
+        pd.DataFrame: Filtered DataFrame with GZ2 classifications.
     """
+    # Columns to keep from the GZ2 dataset
+    # Nota: o arquivo gz2_hart16.csv usa 'dr7objid' e 'total_votes'
     gz2_cols = [
-        'dr7objid',
-        'ra',
-        'dec',
+        'dr7objid',                                          # Object ID for cross-matching with SDSS
         't01_smooth_or_features_a01_smooth_fraction',
         't01_smooth_or_features_a02_features_or_disk_fraction',
         't01_smooth_or_features_a03_star_or_artifact_fraction',
@@ -110,110 +105,79 @@ def load_and_filter_gz2(file_path="gz2_hart16.csv"):
         't03_bar_a07_no_bar_fraction',
         't04_spiral_a08_spiral_fraction',
         't04_spiral_a09_no_spiral_fraction',
-        'total_votes',
+        'total_votes'                                        # Total votes for confidence
     ]
 
     gz2_df = pd.read_csv(file_path, usecols=gz2_cols)
 
     # Renomear para nomes padronizados usados no resto do pipeline
     gz2_df.rename(columns={
-        'dr7objid'   : 'gz2_objid',
-        'ra'         : 'gz2_ra',
-        'dec'        : 'gz2_dec',
-        'total_votes': 'total_votes_gz2',
+        'dr7objid': 'objid',
+        'total_votes': 't01_smooth_or_features_total_weight'
     }, inplace=True)
 
     print(f"Loaded {len(gz2_df)} records from GZ2.")
     return gz2_df
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Atribuição de classes morfológicas
-# ─────────────────────────────────────────────────────────────────────────────
-
 def assign_morphological_class(row, min_vote_fraction=0.8, min_total_votes=20):
     """
     Assigns a morphological class based on GZ2 vote fractions.
 
     Args:
-        row               (pd.Series): Uma linha do DataFrame mesclado.
-        min_vote_fraction   (float): Fração mínima de votos para confirmar classe.
-        min_total_votes       (int): Mínimo de votos para classificação confiável.
+        row               (pd.Series): A row from the GZ2 DataFrame.
+        min_vote_fraction   (float): Minimum fraction of votes for a class to be assigned.
+        min_total_votes       (int): Minimum total votes for a reliable classification.
 
     Returns:
-        str: Classe atribuída ('Elliptical', 'Spiral', 'Lenticular', 'Irregular', 'Uncertain').
+        str: Assigned class ('Elliptical', 'Spiral', 'Lenticular', 'Irregular', 'Uncertain').
     """
-    if row['total_votes_gz2'] < min_total_votes:
+    if row['t01_smooth_or_features_total_weight'] < min_total_votes:
         return 'Uncertain'
 
     if row['t01_smooth_or_features_a01_smooth_fraction'] >= min_vote_fraction:
+        # Smooth galaxies: check for disk features to distinguish Elliptical from Lenticular
         if row['t01_smooth_or_features_a02_features_or_disk_fraction'] >= min_vote_fraction:
-            return 'Lenticular'
+            return 'Lenticular'   # Smooth with disk features
         else:
-            return 'Elliptical'
+            return 'Elliptical'   # Purely smooth
     elif row['t01_smooth_or_features_a02_features_or_disk_fraction'] >= min_vote_fraction:
+        # Galaxies with features/disk: check for spiral arms
         if row['t04_spiral_a08_spiral_fraction'] >= min_vote_fraction:
             return 'Spiral'
         else:
-            return 'Irregular'
+            return 'Irregular'    # Disk but no clear spiral arms
 
-    return 'Uncertain'
+    return 'Uncertain'            # Default if no clear class is assigned
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Merge SDSS + GZ2 por cruzamento espacial de coordenadas (ra, dec)
+# Função auxiliar: merge SDSS + GZ2
 # ─────────────────────────────────────────────────────────────────────────────
 
-def merge_sdss_gz2(sdss_df, gz2_df, max_sep_arcsec=1.0):
+def merge_sdss_gz2(sdss_df, gz2_df):
     """
-    Faz o cruzamento espacial entre SDSS e GZ2 usando as coordenadas ra/dec,
-    atribui classes morfológicas e remove entradas 'Uncertain'.
-
-    O GZ2 usa objids do DR7 e o SDSS foi baixado no DR17 — por isso o merge
-    é feito por proximidade angular (cross-match) e não por objid diretamente.
+    Faz o merge entre os dados do SDSS e do Galaxy Zoo 2 pelo objid,
+    atribui as classes morfológicas e remove as entradas 'Uncertain'.
 
     Args:
-        sdss_df         (pd.DataFrame): DataFrame do SDSS com colunas 'ra', 'dec'.
-        gz2_df          (pd.DataFrame): DataFrame do GZ2 carregado por load_and_filter_gz2().
-        max_sep_arcsec        (float): Separação máxima em arcsec para considerar
-                                       dois objetos como o mesmo (padrão: 1.0 arcsec).
+        sdss_df (pd.DataFrame): DataFrame do SDSS.
+        gz2_df  (pd.DataFrame): DataFrame do GZ2 já carregado por load_and_filter_gz2().
 
     Returns:
         pd.DataFrame: Catálogo mesclado com coluna 'morph_class'.
     """
-    print("Construindo catálogos de coordenadas para cross-match...")
-
-    sdss_coords = SkyCoord(
-        ra=sdss_df['ra'].values * u.deg,
-        dec=sdss_df['dec'].values * u.deg
-    )
-    gz2_coords = SkyCoord(
-        ra=gz2_df['gz2_ra'].values * u.deg,
-        dec=gz2_df['gz2_dec'].values * u.deg
-    )
-
-    print(f"Executando cross-match (separação máxima: {max_sep_arcsec} arcsec)...")
-    idx, sep2d, _ = sdss_coords.match_to_catalog_sky(gz2_coords)
-
-    # Filtrar apenas pares dentro da separação máxima
-    mask = sep2d.arcsec <= max_sep_arcsec
-    n_matched = mask.sum()
-    print(f"Pares encontrados dentro de {max_sep_arcsec} arcsec: {n_matched} / {len(sdss_df)}")
-
-    # Montar DataFrame mesclado
-    sdss_matched = sdss_df[mask].copy().reset_index(drop=True)
-    gz2_matched  = gz2_df.iloc[idx[mask]].copy().reset_index(drop=True)
-
-    merged = pd.concat([sdss_matched, gz2_matched], axis=1)
+    merged = pd.merge(sdss_df, gz2_df, on='objid', how='inner')
     print(f"Registros após merge: {len(merged)}")
 
     # Atribuir classes morfológicas
     merged['morph_class'] = merged.apply(assign_morphological_class, axis=1)
 
+    # Distribuição antes de filtrar incertos
     print("\nDistribuição de classes (incluindo Uncertain):")
     print(merged['morph_class'].value_counts())
 
-    # Remover classificações incertas
+    # Remover classificações incertas do conjunto de treino
     merged_clean = merged[merged['morph_class'] != 'Uncertain'].copy()
     print(f"\nRegistros após remover 'Uncertain': {len(merged_clean)}")
     print("\nDistribuição final de classes:")
@@ -221,10 +185,13 @@ def merge_sdss_gz2(sdss_df, gz2_df, max_sep_arcsec=1.0):
 
     return merged_clean
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Download de Imagens FITS do SDSS
 # ─────────────────────────────────────────────────────────────────────────────
+
+import numpy as np
+from astropy.io import fits
+from tqdm import tqdm
 
 def download_galaxy_image_cutout(ra, dec, objid, size_pixels=64,
                                   band_list=['g', 'r', 'i']):
@@ -235,18 +202,20 @@ def download_galaxy_image_cutout(ra, dec, objid, size_pixels=64,
         ra          (float): Right Ascension of the galaxy (degrees).
         dec         (float): Declination of the galaxy (degrees).
         objid         (int): SDSS object ID.
-        size_pixels   (int): Size of the square cutout image in pixels.
-        band_list    (list): List of photometric bands to download.
+        size_pixels   (int): Size of the square cutout image in pixels (e.g., 64 for 64x64).
+        band_list    (list): List of photometric bands to download (e.g., ['g', 'r', 'i']).
 
     Returns:
-        np.ndarray: Array (size_pixels, size_pixels, len(band_list)) ou None.
+        np.ndarray: A 3D NumPy array (size_pixels, size_pixels, len(band_list))
+                    containing the image data, or None if download fails.
     """
     pos = SkyCoord(ra=ra * u.deg, dec=dec * u.deg, frame='icrs')
 
     try:
+        # Get images for the specified bands
         images = SDSS.get_images(
             coordinates=pos,
-            radius=size_pixels * 0.396 * u.arcsec,
+            radius=size_pixels * 0.396 * u.arcsec,  # 0.396 arcsec/pixel for SDSS
             band=band_list,
             data_release=17,
             cutout_size=size_pixels * u.pixel
@@ -256,18 +225,23 @@ def download_galaxy_image_cutout(ra, dec, objid, size_pixels=64,
             print(f"Warning: No images found for objid {objid} at RA={ra}, Dec={dec}")
             return None
 
+        # Stack images from different bands into a single array
         channels = []
         for img_hdu in images:
+            # img_hdu is a list of HDU objects, usually the first one contains the image data
             data = img_hdu[0].data
             if data.shape[0] != size_pixels or data.shape[1] != size_pixels:
-                print(f"Warning: Unexpected size {data.shape} for objid {objid}.")
+                print(f"Warning: Image cutout for objid {objid} has unexpected size {data.shape}. "
+                      f"Expected {size_pixels}x{size_pixels}.")
                 return None
             channels.append(data)
 
+        # Ensure all channels were successfully retrieved
         if len(channels) == len(band_list):
-            return np.stack(channels, axis=-1)
+            return np.stack(channels, axis=-1)  # Stack along the last axis (channels)
         else:
-            print(f"Warning: Missing bands for objid {objid}.")
+            print(f"Warning: Missing bands for objid {objid}. "
+                  f"Expected {len(band_list)}, got {len(channels)}.")
             return None
 
     except Exception as e:
@@ -291,10 +265,10 @@ def download_images_batch(catalog_df, images_dir, size_pixels=64,
         images_dir        (str): Diretório onde salvar as imagens (.npy).
         size_pixels       (int): Tamanho do cutout em pixels.
         band_list        (list): Bandas fotométricas a baixar.
-        max_images        (int): Limite de imagens (None = todas).
+        max_images        (int): Limite de imagens (None = todas). Use 500 para teste.
 
     Returns:
-        list: Lista de objids com download bem-sucedido.
+        list: Lista de objids cujo download foi bem-sucedido.
     """
     os.makedirs(images_dir, exist_ok=True)
 
@@ -309,9 +283,10 @@ def download_images_batch(catalog_df, images_dir, size_pixels=64,
     print("(Imagens já existentes serão puladas)\n")
 
     for _, row in tqdm(df.iterrows(), total=len(df), desc="Baixando imagens"):
-        objid    = int(row['objid'])
+        objid = int(row['objid'])
         out_path = os.path.join(images_dir, f"{objid}.npy")
 
+        # Pular se já existir
         if os.path.exists(out_path):
             successful.append(objid)
             continue
