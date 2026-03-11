@@ -2,7 +2,7 @@
 load_gz2_and_merge.py
 Passo 2 do projeto GalaxyNet:
   - Carrega o Galaxy Zoo 2 (gz2_hart16.csv)
-  - Atribui classes morfológicas (Listing 2 do PDF)
+  - Atribui classes morfológicas
   - Faz o merge com os dados do SDSS já baixados
   - Salva o catálogo mesclado em data/processed/merged_catalog.csv
 
@@ -50,7 +50,7 @@ print(f"\n[1/3] Carregando dados do SDSS...")
 sdss_df = pd.read_csv(SDSS_CSV)
 print(f"      {len(sdss_df)} galáxias carregadas de {SDSS_CSV}")
 
-# ─── Carregar e filtrar GZ2 (Listing 2 do PDF) ────────────────────────────────
+# ─── Carregar e filtrar GZ2  ────────────────────────────────
 print(f"\n[2/3] Carregando Galaxy Zoo 2...")
 gz2_df = load_and_filter_gz2(GZ2_CSV)
 
