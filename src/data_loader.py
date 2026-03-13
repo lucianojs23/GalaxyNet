@@ -227,52 +227,79 @@ def merge_sdss_gz2(sdss_df, gz2_df, max_sep_arcsec=1.0):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def download_galaxy_image_cutout(ra, dec, objid, size_pixels=64,
-                                  band_list=['g', 'r', 'i']):
+                                  band_list=['g', 'r', 'i'],
+                                  timeout=60, max_retries=3):
     """
     Downloads a cutout image for a galaxy from SDSS in specified bands.
+
+    O SDSS.get_images() retorna a placa inteira (~2048x1489 px). O recorte
+    centrado na posição da galáxia é feito com astropy.nddata.Cutout2D.
 
     Args:
         ra          (float): Right Ascension of the galaxy (degrees).
         dec         (float): Declination of the galaxy (degrees).
         objid         (int): SDSS object ID.
-        size_pixels   (int): Size of the square cutout image in pixels.
-        band_list    (list): List of photometric bands to download.
+        size_pixels   (int): Tamanho do cutout quadrado em pixels (padrão: 64).
+        band_list    (list): Bandas fotométricas a baixar (padrão: ['g','r','i']).
+        timeout       (int): Timeout em segundos por tentativa (padrão: 60).
+        max_retries   (int): Número máximo de tentativas em caso de falha (padrão: 3).
 
     Returns:
-        np.ndarray: Array (size_pixels, size_pixels, len(band_list)) ou None.
+        np.ndarray: Array (size_pixels, size_pixels, len(band_list)) float32, ou None.
     """
+    from astropy.nddata import Cutout2D
+    from astropy.wcs import WCS
+    import time
+
     pos = SkyCoord(ra=ra * u.deg, dec=dec * u.deg, frame='icrs')
 
-    try:
-        images = SDSS.get_images(
-            coordinates=pos,
-            radius=size_pixels * 0.396 * u.arcsec,
-            band=band_list,
-            data_release=17,
-            cutout_size=size_pixels * u.pixel
-        )
+    for attempt in range(1, max_retries + 1):
+        try:
+            hdu_lists = SDSS.get_images(
+                coordinates=pos,
+                radius=size_pixels * 0.396 * u.arcsec,
+                band=band_list,
+                data_release=17,
+                timeout=timeout,
+                show_progress=False
+            )
 
-        if not images:
-            print(f"Warning: No images found for objid {objid} at RA={ra}, Dec={dec}")
-            return None
-
-        channels = []
-        for img_hdu in images:
-            data = img_hdu[0].data
-            if data.shape[0] != size_pixels or data.shape[1] != size_pixels:
-                print(f"Warning: Unexpected size {data.shape} for objid {objid}.")
+            if not hdu_lists:
                 return None
-            channels.append(data)
 
-        if len(channels) == len(band_list):
+            channels = []
+            for hdu_list in hdu_lists:
+                hdu  = hdu_list[0]
+                wcs  = WCS(hdu.header)
+                data = hdu.data
+
+                if data is None:
+                    return None
+
+                cutout = Cutout2D(
+                    data,
+                    position=pos,
+                    size=(size_pixels, size_pixels),
+                    wcs=wcs,
+                    mode='partial',
+                    fill_value=0.0
+                )
+                channels.append(cutout.data.astype(np.float32))
+
+            if len(channels) != len(band_list):
+                return None
+
             return np.stack(channels, axis=-1)
-        else:
-            print(f"Warning: Missing bands for objid {objid}.")
-            return None
 
-    except Exception as e:
-        print(f"Error downloading image for objid {objid}: {e}")
-        return None
+        except Exception as e:
+            err = str(e)
+            if attempt < max_retries:
+                wait = attempt * 5  # 5s, 10s entre tentativas
+                print(f"  [objid {objid}] Tentativa {attempt}/{max_retries} falhou: {err[:60]} — aguardando {wait}s...")
+                time.sleep(wait)
+            else:
+                print(f"  [objid {objid}] Falhou após {max_retries} tentativas: {err[:80]}")
+                return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────

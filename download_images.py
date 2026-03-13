@@ -58,7 +58,3 @@ successful = download_images_batch(
 
 print(f"\nImagens salvas em: {IMAGES_DIR}")
 print(f"Formato de cada arquivo: (64, 64, 3) — float32, bandas [g, r, i]")
-
-print("\nPróximo passo:")
-print("  git add .")
-print("  git commit -m 'data: download imagens FITS concluído'")
