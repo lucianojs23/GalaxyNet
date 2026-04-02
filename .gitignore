@@ -10,9 +10,23 @@ data/raw/*.fits
 data/images/*.npy
 data/images/*.png
 
+# Artefatos gerados pelo pré-processamento (binários grandes)
+data/processed/*.npy
+data/processed/*.pkl
+venv/
+
 # Modelos treinados
 models/*.h5
 models/*.keras
 
 # Sistema
 .DS_Store
+
+# Arquivos de configuração de ferramentas de IA
+CLAUDE.md
+
+# Claude AI
+.claude/
+**/CLAUDE.md
+*.claude
+.claudeignore
