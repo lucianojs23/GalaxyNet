@@ -87,8 +87,8 @@ GZ2 (Zenodo)   ──┘                         │                │
 ### 1. Clonar o repositorio
 
 ```bash
-git clone https://github.com/<seu-usuario>/galaxy_classification.git
-cd galaxy_classification
+git clone https://github.com/lucianojs23/GalaxyNet.git
+cd GalaxyNet
 ```
 
 ### 2. Criar e ativar o ambiente virtual
