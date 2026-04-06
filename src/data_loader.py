@@ -28,7 +28,7 @@ def download_sdss_galaxy_data(ra_center, dec_center, radius_deg,
         pd.DataFrame: DataFrame containing the downloaded galaxy data.
     """
     query = f"""
-    SELECT TOP {max_records}
+    SELECT
         p.objid, p.ra, p.dec,
         p.u, p.g, p.r, p.i, p.z,
         p.petroRad_r, p.petroR50_r, p.petroR90_r,

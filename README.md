@@ -31,19 +31,9 @@ galaxy_classification/
 └── README.md
 ```
 
-## Cronograma
-| Semana | Tema | Entregável |
-|--------|------|------------|
-| 1 | EDA e Aquisição de Dados | Notebook EDA, dados baixados |
-| 2 | Pré-processamento | Dados limpos e imagens pré-processadas |
-| 3 | Modelo MLP | MLP treinado e avaliado |
-| 4 | Modelo CNN | CNN treinada com data augmentation |
-| 5 | Modelo Híbrido | Modelo híbrido + Grad-CAM |
-| 6 | Análise e Relatório | Relatório final e apresentação |
-
 ## Instalação
 ```bash
-python -m venv galaxy_env
+python3 -m venv galaxy_env
 source galaxy_env/bin/activate
 pip install -r requirements.txt
 ```

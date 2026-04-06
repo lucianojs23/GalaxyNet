@@ -31,3 +31,7 @@ CLAUDE.md
 *.claude
 .claudeignore
 venv/
+venv/
+galaxy_env/
+venv/
+galaxy_env/
