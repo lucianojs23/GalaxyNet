@@ -82,7 +82,7 @@
   {\LARGE Classificador Morfológico de Galáxias \par}
   \vspace{0.8cm}
   {\large\itshape Relatório Parcial --- Etapas de Aquisição de Dados,\\
-   Análise Exploratória e Pré-processamento \par}
+   Análise Exploratória, Pré-processamento e Modelo MLP \par}
   \vfill
   {\large Disciplina: Deep Learning Aplicado à Astrofísica \par}
   \vspace{0.3cm}
@@ -108,8 +108,12 @@ Sky Survey}, Data Release 17) e rótulos supervisionados do Galaxy Zoo~2.
 As etapas concluídas cobrem: (i)~aquisição e mesclagem dos dados fotométricos,
 espectroscópicos e morfológicos; (ii)~análise exploratória de dados (EDA);
 (iii)~engenharia de \textit{features} tabulares e normalização com
-\textit{StandardScaler}; e (iv)~pré-processamento de imagens FITS com
-normalização \textit{arcsinh} e redimensionamento via OpenCV.
+\textit{StandardScaler}; (iv)~pré-processamento de imagens FITS com
+normalização \textit{arcsinh} e redimensionamento via OpenCV; e
+(v)~implementação, treinamento e avaliação do primeiro modelo de classificação
+--- uma rede MLP (\textit{Multi-Layer Perceptron}) com \textit{features}
+tabulares, utilizando \textit{class weights} balanceados para tratamento do
+desbalanceamento severo de classes.
 O catálogo resultante contém 156~galáxias com 15~\textit{features} tabulares
 e imagens de resolução $64 \times 64$ pixels em três bandas fotométricas
 (\textit{g}, \textit{r}, \textit{i}).
@@ -139,9 +143,10 @@ O projeto GalaxyNet tem como objetivo construir e avaliar três arquiteturas:
         arquitetura de dupla entrada.
 \end{itemize}
 
-Este relatório cobre as fases 1 e 2 do cronograma --- aquisição de dados,
-EDA e pré-processamento --- que constituem a fundação sobre a qual os modelos
-serão treinados.
+Este relatório cobre as fases 1 a 3 do cronograma --- aquisição de dados,
+EDA, pré-processamento e o primeiro modelo de classificação (MLP) --- que
+constituem a fundação sobre a qual os demais modelos (CNN e Híbrido) serão
+construídos.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \section{Bancos de Dados Utilizados}
@@ -495,33 +500,38 @@ X_test   = scaler.transform(X_test)        # apenas transform no teste
 A proporção de 86,5\%/10,9\%/2,6\% entre Elliptical/Spiral/Irregular implica
 que um classificador trivial que sempre prediz ``Elliptical'' atingiria
 $\sim$86\% de acurácia sem aprender nenhuma característica discriminante.
-Para mitigar esse problema, adotou-se a técnica \textbf{SMOTE}
-(\textit{Synthetic Minority Over-sampling Technique}) \cite{chawla2002},
-que gera amostras sintéticas interpolando pares de exemplos reais da
-classe minoritária no espaço de \textit{features}:
+
+Para mitigar esse problema, adotou-se a técnica de \textbf{class weights
+balanceados}, implementada via a função
+\texttt{compute\_class\_weight('balanced', ...)} do \texttt{scikit-learn}.
+O peso de cada classe $c$ é calculado como:
 
 \begin{equation}
-  \mathbf{x}_\text{novo} = \mathbf{x}_i + \lambda \cdot (\mathbf{x}_j - \mathbf{x}_i),
-  \quad \lambda \sim \mathcal{U}(0, 1)
+  w_c = \frac{N_\text{total}}{K \cdot N_c}
 \end{equation}
 
-onde $\mathbf{x}_i$ e $\mathbf{x}_j$ são dois vizinhos próximos da mesma
-classe. O SMOTE é aplicado \textbf{exclusivamente sobre o conjunto de treino},
-após o \textit{split}, para que validação e teste preservem a distribuição
-original (Figura~\ref{fig:smote}).
+onde $N_\text{total}$ é o número total de amostras no treino, $K$ é o número
+de classes e $N_c$ é o número de amostras da classe $c$. O efeito é que cada
+amostra de uma classe minoritária contribui proporcionalmente mais para a
+função de perda, incentivando o modelo a não ignorá-la.
 
-\begin{figure}[H]
-  \centering
-  \includegraphics[width=\textwidth]{fig12_smote_balanceamento.png}
-  \caption{Distribuição de classes antes e após a aplicação do SMOTE no
-           conjunto de treino. O SMOTE equaliza as contagens entre as três
-           classes sem duplicar exemplos existentes.}
-  \label{fig:smote}
-\end{figure}
+Esta abordagem foi preferida ao SMOTE (\textit{Synthetic Minority
+Over-sampling Technique}) \cite{chawla2002} porque a classe Irregular
+possui apenas 4~amostras no catálogo completo (2--3 no treino após o
+\textit{split}), o que torna inviável a geração de amostras sintéticas
+confiáveis por interpolação entre vizinhos. Os \textit{class weights}
+não alteram a distribuição dos dados e são aplicados diretamente na função
+de custo durante o treinamento.
 
-\textbf{Nota técnica}: com apenas 4~amostras na classe Irregular, o parâmetro
-\texttt{k\_neighbors} do SMOTE é ajustado automaticamente para
-$k = \max(1,\, N_\text{min} - 1) = 3$ a fim de evitar erro de execução.
+\begin{lstlisting}[caption={Cálculo e aplicação dos \textit{class weights}.}, label=lst:classweight]
+from sklearn.utils.class_weight import compute_class_weight
+
+weights = compute_class_weight('balanced',
+    classes=np.unique(y_train_int), y=y_train_int)
+class_weight_dict = dict(enumerate(weights))
+
+model.fit(X_train, y_train, class_weight=class_weight_dict, ...)
+\end{lstlisting}
 
 \subsection{Artefatos Gerados}
 
@@ -737,6 +747,9 @@ O código foi organizado em módulos reutilizáveis em \texttt{src/} e
     \texttt{src/preprocessing.py}   & Feature engineering, escalonamento e pré-processamento de imagens \\
     \texttt{notebooks/01\_eda.ipynb} & Análise exploratória completa (6 figuras) \\
     \texttt{notebooks/02\_preprocessing.ipynb} & Pré-processamento tabular e de imagens (9 figuras) \\
+    \texttt{src/models.py}               & Definição da arquitetura MLP (e futuramente CNN e Híbrido) \\
+    \texttt{src/evaluation.py}           & Avaliação científica: \textit{classification report}, matriz de confusão, \textit{Completeness} e \textit{Reliability} \\
+    \texttt{notebooks/03\_mlp\_model.ipynb} & Treinamento e avaliação do modelo MLP tabular (2 figuras) \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -820,9 +833,13 @@ Tabela~\ref{tab:bibliotecas}. A seguir, descreve-se o papel de cada uma no
     \texttt{StandardScaler} para normalização das \textit{features}
     tabulares (média zero, variância unitária);
     \texttt{LabelEncoder} para codificação dos rótulos morfológicos em
-    inteiros; e
-    \texttt{train\_test\_split} para partição dos dados em conjuntos de
-    treino, validação e teste com estratificação por classe. \\[6pt]
+    inteiros;
+    \texttt{train\_test\_split} para partição estratificada dos dados em
+    conjuntos de treino, validação e teste;
+    \texttt{compute\_class\_weight} para cálculo de pesos balanceados
+    que compensam o desbalanceamento de classes; e
+    \texttt{classification\_report} / \texttt{confusion\_matrix} para
+    avaliação dos modelos treinados. \\[6pt]
 
   \texttt{Imbalanced-learn}
   & Extensão do Scikit-learn voltada para problemas com desbalanceamento
@@ -847,14 +864,14 @@ Tabela~\ref{tab:bibliotecas}. A seguir, descreve-se o papel de cada uma no
     de álgebra linear, interpolação e otimização. \\[6pt]
 
   \texttt{TensorFlow / Keras}
-  & \textit{Framework} de \textit{Deep Learning} que será utilizado nas
-    próximas etapas do projeto para definir, treinar e avaliar as três
-    arquiteturas de redes neurais: MLP (\textit{Multi-Layer Perceptron}),
-    CNN (\textit{Convolutional Neural Network}) e o modelo Híbrido de
-    dupla entrada. A API \texttt{tf.keras} fornece camadas como
-    \texttt{Dense}, \texttt{Conv2D}, \texttt{BatchNormalization} e
-    \texttt{Dropout}, além de \textit{callbacks} como
-    \texttt{EarlyStopping} e \texttt{ModelCheckpoint}. \\[6pt]
+  & \textit{Framework} de \textit{Deep Learning} utilizado para definir,
+    treinar e avaliar os modelos de classificação. O modelo MLP já foi
+    implementado com a API \texttt{tf.keras.Sequential}, usando camadas
+    \texttt{Dense}, \texttt{BatchNormalization} e \texttt{Dropout}, com
+    \textit{callbacks} \texttt{EarlyStopping} e
+    \texttt{ReduceLROnPlateau}. Nas próximas etapas, serão adicionadas
+    as arquiteturas CNN (\texttt{Conv2D}, \texttt{MaxPooling2D}) e
+    Híbrida (API funcional com dupla entrada). \\[6pt]
 
   \texttt{Photutils}
   & Pacote afiliado ao Astropy para fotometria de fontes astronômicas.
@@ -871,18 +888,169 @@ Tabela~\ref{tab:bibliotecas}. A seguir, descreve-se o papel de cada uma no
 \end{longtable}
 
 % ─────────────────────────────────────────────────────────────────────────────
+\section{Modelo Tabular --- MLP (Seção 6)}
+% ─────────────────────────────────────────────────────────────────────────────
+
+O primeiro modelo de classificação implementado é uma rede
+\textit{Multi-Layer Perceptron} (MLP) que utiliza exclusivamente as
+15~\textit{features} tabulares. A implementação segue o \textit{Listing~10}
+do enunciado do projeto e está organizada em:
+\begin{itemize}[leftmargin=2em]
+  \item \texttt{src/models.py}: definição da arquitetura
+        (\texttt{create\_mlp\_model}).
+  \item \texttt{src/evaluation.py}: avaliação científica
+        (\texttt{evaluate\_galaxy\_classifier}).
+  \item \texttt{notebooks/03\_mlp\_model.ipynb}: pipeline completo de
+        treinamento e avaliação.
+\end{itemize}
+
+\subsection{Preparação dos Dados}
+
+Os artefatos gerados pelo pré-processamento (\texttt{X\_tabular.npy},
+\texttt{y\_labels.npy}, \texttt{objids.npy}, \texttt{scaler.pkl}) são
+carregados do diretório \texttt{data/processed/}. Os rótulos de classe
+(strings) são codificados em inteiros via \texttt{LabelEncoder} e
+convertidos para representação \textit{one-hot} com
+\texttt{to\_categorical}:
+
+\begin{center}
+  Elliptical $\to 0$, \quad Irregular $\to 1$, \quad Spiral $\to 2$
+\end{center}
+
+O conjunto é dividido em três partições com estratificação por classe:
+\begin{itemize}[leftmargin=2em]
+  \item \textbf{Treino}: 70\% ($\approx$109 amostras)
+  \item \textbf{Validação}: 15\% ($\approx$24 amostras)
+  \item \textbf{Teste}: 15\% ($\approx$23 amostras)
+\end{itemize}
+
+Os \textit{class weights} balanceados (Seção~5.4) são aplicados durante
+o treinamento para compensar o desbalanceamento severo.
+
+\subsection{Arquitetura do MLP}
+
+A arquitetura Sequential é composta por três blocos ocultos de complexidade
+decrescente, cada um contendo \texttt{Dense} $\to$ \texttt{BatchNormalization}
+$\to$ \texttt{Dropout}, seguidos de uma camada de saída com ativação
+\texttt{softmax}:
+
+\begin{table}[H]
+  \centering
+  \caption{Arquitetura do modelo MLP.}
+  \label{tab:mlp_arch}
+  \begin{tabular}{llrr}
+    \toprule
+    \textbf{Camada} & \textbf{Ativação} & \textbf{Neurônios} & \textbf{Dropout} \\
+    \midrule
+    Input           & ---       & 15  & --- \\
+    Dense + BN      & ReLU      & 256 & 0,3 \\
+    Dense + BN      & ReLU      & 128 & 0,3 \\
+    Dense + BN      & ReLU      & 64  & 0,2 \\
+    Dense (saída)   & Softmax   & 3   & --- \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+O modelo é compilado com o otimizador \texttt{Adam}
+($\eta = 10^{-3}$), função de perda \texttt{categorical\_crossentropy}
+e métrica \texttt{accuracy}.
+
+A combinação \texttt{BatchNormalization + Dropout} em cada bloco oculto
+tem papéis complementares:
+\begin{itemize}[leftmargin=2em]
+  \item \textbf{BatchNormalization}: normaliza as ativações internas entre
+        camadas, estabilizando o treinamento e permitindo \textit{learning
+        rates} mais altos.
+  \item \textbf{Dropout}: desativa aleatoriamente uma fração dos neurônios
+        em cada passo de treinamento, atuando como regularizador que reduz
+        o \textit{overfitting}.
+\end{itemize}
+
+\subsection{Treinamento}
+
+O treinamento foi conduzido por até 100 épocas com dois \textit{callbacks}:
+
+\begin{itemize}[leftmargin=2em]
+  \item \textbf{EarlyStopping}: monitora \texttt{val\_loss} com paciência de
+        10 épocas; restaura automaticamente os pesos da melhor época
+        (\texttt{restore\_best\_weights=True}).
+  \item \textbf{ReduceLROnPlateau}: reduz o \textit{learning rate} pela
+        metade quando \texttt{val\_loss} estagna por 5 épocas consecutivas,
+        com limite inferior de $10^{-7}$.
+\end{itemize}
+
+As curvas de treinamento (Figura~\ref{fig:mlp_curves}) permitem verificar
+a convergência e diagnosticar possíveis problemas de \textit{overfitting}
+ou \textit{underfitting}.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\textwidth]{fig16_mlp_training_curves.png}
+  \caption{Curvas de \textit{loss} (esquerda) e \textit{accuracy} (direita)
+           do MLP ao longo das épocas de treinamento. As curvas de treino
+           e validação permitem avaliar a convergência e o grau de
+           generalização do modelo.}
+  \label{fig:mlp_curves}
+\end{figure}
+
+\subsection{Avaliação no Conjunto de Teste}
+
+A avaliação utiliza a função \texttt{evaluate\_galaxy\_classifier()} de
+\texttt{src/evaluation.py}, que produz:
+
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{Classification Report}: \textit{precision}, \textit{recall}
+        e \textit{F1-score} por classe.
+  \item \textbf{Matriz de Confusão} (Figura~\ref{fig:mlp_cm}): visualização
+        dos acertos e erros de classificação.
+  \item \textbf{Métricas Científicas}: \textit{Completeness} (Recall) e
+        \textit{Reliability} (Precision) por classe morfológica --- métricas
+        padrão em astronomia observacional para avaliação de pipelines de
+        classificação de surveys \cite{hart2016}.
+\end{enumerate}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.7\textwidth]{fig17_mlp_confusion_matrix.png}
+  \caption{Matriz de confusão do modelo MLP no conjunto de teste.}
+  \label{fig:mlp_cm}
+\end{figure}
+
+Em astronomia, \textit{Completeness} (equivalente ao Recall) mede a
+fração de objetos de uma classe que foram corretamente identificados pelo
+modelo, enquanto \textit{Reliability} (equivalente à Precision) mede a
+pureza da classificação --- ou seja, a fração de predições de uma classe
+que realmente pertencem a ela. Ambas são fundamentais para avaliar a
+confiabilidade de classificadores em contextos de surveys astronômicos.
+
+\subsection{Artefatos Gerados}
+
+O treinamento do MLP produz os seguintes artefatos:
+
+\begin{table}[H]
+  \centering
+  \caption{Artefatos gerados pelo modelo MLP.}
+  \begin{tabular}{lp{8.5cm}}
+    \toprule
+    \textbf{Arquivo} & \textbf{Conteúdo} \\
+    \midrule
+    \texttt{models/mlp\_galaxy\_classifier.h5} & Modelo MLP treinado (pesos + arquitetura) \\
+    \texttt{models/label\_encoder.pkl}          & \texttt{LabelEncoder} ajustado (reutilizado nos notebooks 04 e 05) \\
+    \texttt{models/mlp\_test\_data.pkl}         & Dados de teste (X, y, objids) para comparação entre modelos \\
+    \texttt{reports/figures/fig16\_*.png}        & Curvas de treinamento (loss e accuracy) \\
+    \texttt{reports/figures/fig17\_*.png}        & Matriz de confusão \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+% ─────────────────────────────────────────────────────────────────────────────
 \section{Próximas Etapas}
 % ─────────────────────────────────────────────────────────────────────────────
 
-Com a base de dados preparada, as próximas fases do projeto são:
+Com o modelo MLP tabular implementado e avaliado, as próximas fases do
+projeto são:
 
 \begin{enumerate}[leftmargin=2em]
-  \item \textbf{Modelo MLP} (\texttt{03\_mlp\_model.ipynb}): carregar
-        \texttt{X\_tabular.npy} e \texttt{y\_labels.npy}, aplicar SMOTE
-        somente no treino, definir e treinar a arquitetura Sequential com
-        camadas Dense-BatchNorm-Dropout, e avaliar com métricas de
-        \textit{Completeness} e \textit{Reliability}.
-
   \item \textbf{Modelo CNN} (\texttt{04\_cnn\_model.ipynb}): carregar
         \texttt{X\_images.npy}, aplicar \textit{data augmentation} com
         \texttt{ImageDataGenerator} (\texttt{rotation\_range=360},
@@ -894,22 +1062,30 @@ Com a base de dados preparada, as próximas fases do projeto são:
         \textit{feature}, treinamento conjunto e análise de
         \textit{Grad-CAM} para interpretabilidade.
 
-  \item \textbf{Avaliação Científica}: geração de matrizes de confusão,
-        comparação dos três modelos e discussão das implicações astrofísicas
-        dos erros de classificação.
+  \item \textbf{Avaliação Científica Comparativa}: geração de matrizes de
+        confusão para os três modelos, tabela comparativa de
+        \textit{Completeness} e \textit{Reliability}, e discussão das
+        implicações astrofísicas dos erros de classificação.
 \end{enumerate}
 
 % ─────────────────────────────────────────────────────────────────────────────
 \section{Conclusão Parcial}
 % ─────────────────────────────────────────────────────────────────────────────
 
-As etapas de aquisição de dados, EDA e pré-processamento foram concluídas
-com sucesso, produzindo um catálogo limpo de 156~galáxias com rótulos
-confiáveis, 15~\textit{features} tabulares normalizadas e imagens
-$64 \times 64 \times 3$ em $[0,1]$. Os principais desafios identificados
-são o severo desbalanceamento de classes (86,5\% elípticas) e o tamanho
-reduzido do conjunto de dados, que exigirão técnicas de regularização e
-aumento de dados (\textit{data augmentation}) nas fases de modelagem.
+As etapas de aquisição de dados, EDA, pré-processamento e primeiro modelo
+de classificação (MLP) foram concluídas com sucesso. O \textit{pipeline}
+produziu um catálogo limpo de 156~galáxias com rótulos confiáveis,
+15~\textit{features} tabulares normalizadas e imagens
+$64 \times 64 \times 3$ em $[0,1]$.
+
+O modelo MLP tabular, treinado com \textit{class weights} balanceados
+e regularização via \texttt{BatchNormalization} e \texttt{Dropout},
+demonstrou a viabilidade da classificação morfológica a partir de
+\textit{features} fotométricas e espectroscópicas. Os principais desafios
+remanescentes são o severo desbalanceamento de classes (86,5\% elípticas),
+o tamanho reduzido do conjunto de dados e a sub-representação da classe
+Irregular (apenas 4 amostras), que exigirão técnicas de \textit{data
+augmentation} nas fases de modelagem com imagens (CNN e Híbrido).
 
 % ─────────────────────────────────────────────────────────────────────────────
 \begin{thebibliography}{9}
