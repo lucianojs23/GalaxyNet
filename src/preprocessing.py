@@ -28,6 +28,62 @@ TABULAR_FEATURES = [
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Limpeza do Catálogo
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Faixas físicas esperadas para colunas SDSS.
+# Usadas para detectar e corrigir valores sem ponto decimal (artefato de locale).
+_DECIMAL_FIX_RANGES = {
+    'u': (10.0, 25.0), 'g': (10.0, 25.0), 'r': (10.0, 25.0),
+    'i': (10.0, 25.0), 'z': (10.0, 25.0),
+    'petroRad_r':  (0.1, 200.0),
+    'petroR50_r':  (0.1, 100.0),
+    'petroR90_r':  (0.1, 200.0),
+    'velDisp':    (10.0, 600.0),
+    'velDispErr':  (0.5, 200.0),
+}
+
+
+def fix_missing_decimal(df):
+    """
+    Corrige valores SDSS onde o ponto decimal foi perdido (artefato de locale).
+
+    Heurística: se um valor não possui parte fracionária E o valor dividido por
+    1000 cai dentro da faixa física esperada da coluna, o ponto decimal foi
+    removido durante a exportação/importação do CSV.
+
+    Exemplos:
+        u = 16106   → 16.106  (magnitude SDSS, faixa 10–25)
+        petroR50_r = 1988  → 1.988  (raio em arcsec, faixa 0.1–100)
+        velDisp = 230421   → 230.421  (dispersão de velocidades, faixa 10–600 km/s)
+
+    Valores sem ponto decimal que não se encaixam em nenhuma coluna (ou cuja
+    divisão por 1000 ainda cai fora da faixa) não são alterados — serão
+    capturados e removidos pelo filtro de precisão subsequente.
+
+    Args:
+        df (pd.DataFrame): DataFrame lido do CSV (colunas já em float).
+
+    Returns:
+        pd.DataFrame: Cópia com os valores corrigidos e contagem impressa.
+    """
+    df = df.copy()
+    n_corrected = 0
+    for col, (lo, hi) in _DECIMAL_FIX_RANGES.items():
+        if col not in df.columns:
+            continue
+        # Valores sem parte fracionária E fora da faixa esperada
+        mask = (df[col] % 1 == 0) & (df[col] > hi)
+        corrected = df.loc[mask, col] / 1000.0
+        valid = (corrected >= lo) & (corrected <= hi)
+        idx = corrected[valid].index
+        df.loc[idx, col] = corrected[valid]
+        n_corrected += len(idx)
+    print(f'fix_missing_decimal: {n_corrected} valor(es) corrigido(s)')
+    return df
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Feature Engineering
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -68,27 +124,29 @@ def engineer_tabular_features(df):
 # Pré-processamento Tabular Principal
 # ─────────────────────────────────────────────────────────────────────────────
 
-def preprocess_tabular_data(df, features=None, scaler=None):
+def preprocess_tabular_data(df, features=None, scaler=None, scale=True):
     """
-    Realiza engenharia de features, limpeza de NaN e escalonamento tabular.
+    Realiza engenharia de features, limpeza de NaN e opcionalmente escalonamento.
 
     Fluxo:
         1. Chama engineer_tabular_features() para criar colunas derivadas.
         2. Remove linhas com NaN em qualquer feature ou em morph_class.
-        3. Escala com StandardScaler (fit no treino, transform no val/teste).
+        3. Se scale=True, escala com StandardScaler.
 
     Args:
         df       (pd.DataFrame): DataFrame de merged_catalog.csv.
         features       (list): Colunas a usar. Padrão: TABULAR_FEATURES.
-        scaler (StandardScaler): Scaler já ajustado. Se None, ajusta um novo
-                                 no df recebido (use apenas para treino).
+        scaler (StandardScaler): Scaler já ajustado. Se None e scale=True,
+                                 ajusta um novo no df recebido.
+        scale          (bool): Se False, retorna X bruto sem escalonamento e
+                               scaler=None. Use False no notebook de pré-
+                               processamento para escalonar depois do split.
 
     Returns:
-        X_scaled (np.ndarray):    Matriz de features escalonada (float64).
+        X        (np.ndarray):    Matriz de features (bruta ou escalonada).
         y        (pd.Series):     Rótulos de classe ('morph_class') alinhados.
-        scaler   (StandardScaler): Scaler ajustado (reutilizar em val/teste).
-        objids   (pd.Series):     objids alinhados com X_scaled (para join
-                                  com imagens no modelo Híbrido).
+        scaler   (StandardScaler | None): Scaler ajustado, ou None se scale=False.
+        objids   (pd.Series):     objids alinhados com X.
     """
     if features is None:
         features = TABULAR_FEATURES
@@ -103,54 +161,66 @@ def preprocess_tabular_data(df, features=None, scaler=None):
     print(f"Removidos (NaN)     : {n_dropped}")
     print(f"Registros finais    : {len(df_clean)}")
 
-    X = df_clean[features].values
+    X = df_clean[features].values.astype(np.float32)
     y = df_clean['morph_class'].reset_index(drop=True)
     objids = df_clean['objid'].reset_index(drop=True)
 
+    if not scale:
+        return X, y, None, objids
+
     if scaler is None:
         scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
+        X = scaler.fit_transform(X).astype(np.float32)
     else:
-        X_scaled = scaler.transform(X)
+        X = scaler.transform(X).astype(np.float32)
 
-    return X_scaled, y, scaler, objids
+    return X, y, scaler, objids
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Persistência
 # ─────────────────────────────────────────────────────────────────────────────
 
-def save_preprocessed_tabular(X_scaled, y, scaler, objids, out_dir):
+def save_preprocessed_tabular(X_scaled, y, objids, out_dir, scaler=None):
     """
     Salva os artefatos do pré-processamento tabular em out_dir.
 
     Arquivos gerados:
-        X_tabular.npy  — matriz de features escalonada (float32)
+        X_tabular.npy  — matriz de features (float32; bruta ou escalonada)
         y_labels.npy   — rótulos morph_class como array de strings
         objids.npy     — objids alinhados com X_tabular
-        scaler.pkl     — StandardScaler ajustado
+        scaler.pkl     — StandardScaler ajustado (apenas se scaler não for None)
 
     Args:
-        X_scaled (np.ndarray):    Saída de preprocess_tabular_data().
-        y        (pd.Series):     Rótulos de classe.
-        scaler   (StandardScaler): Scaler ajustado.
-        objids   (pd.Series):     objids correspondentes.
-        out_dir        (str):     Diretório de destino (criado se não existir).
+        X_scaled (np.ndarray):         Saída de preprocess_tabular_data().
+        y        (pd.Series|ndarray):  Rótulos de classe.
+        objids   (pd.Series|ndarray):  objids correspondentes.
+        out_dir        (str):          Diretório de destino (criado se não existir).
+        scaler   (StandardScaler):     Scaler ajustado, ou None (padrão) para não salvar.
+                                       Após a correção do pipeline, o scaler é ajustado
+                                       no notebook 03 (pós-split) e salvo em models/.
     """
     os.makedirs(out_dir, exist_ok=True)
 
-    np.save(os.path.join(out_dir, 'X_tabular.npy'), X_scaled.astype(np.float32))
-    np.save(os.path.join(out_dir, 'y_labels.npy'),  y.values)
-    np.save(os.path.join(out_dir, 'objids.npy'),    objids.values)
+    y_arr = y.values if hasattr(y, 'values') else y
+    ids_arr = objids.values if hasattr(objids, 'values') else objids
 
-    with open(os.path.join(out_dir, 'scaler.pkl'), 'wb') as f:
-        pickle.dump(scaler, f)
+    np.save(os.path.join(out_dir, 'X_tabular.npy'), X_scaled.astype(np.float32))
+    np.save(os.path.join(out_dir, 'y_labels.npy'),  y_arr)
+    np.save(os.path.join(out_dir, 'objids.npy'),    ids_arr)
+
+    if scaler is not None:
+        with open(os.path.join(out_dir, 'scaler.pkl'), 'wb') as f:
+            pickle.dump(scaler, f)
 
     print(f"\nArtefatos salvos em '{out_dir}':")
     print(f"  X_tabular.npy  → shape {X_scaled.shape}, dtype float32")
-    print(f"  y_labels.npy   → {len(y)} rótulos: {sorted(y.unique())}")
-    print(f"  objids.npy     → {len(objids)} IDs")
-    print(f"  scaler.pkl     → StandardScaler (mean/scale para {X_scaled.shape[1]} features)")
+    print(f"  y_labels.npy   → {len(y_arr)} rótulos")
+    print(f"  objids.npy     → {len(ids_arr)} IDs")
+    if scaler is not None:
+        print(f"  scaler.pkl     → StandardScaler ({X_scaled.shape[1]} features)")
+    else:
+        print(f"  scaler.pkl     → não salvo (scaler será ajustado no notebook 03)")
 
 
 def load_preprocessed_tabular(out_dir):
@@ -170,8 +240,11 @@ def load_preprocessed_tabular(out_dir):
     y        = np.load(os.path.join(out_dir, 'y_labels.npy'),  allow_pickle=True)
     objids   = np.load(os.path.join(out_dir, 'objids.npy'),    allow_pickle=True)
 
-    with open(os.path.join(out_dir, 'scaler.pkl'), 'rb') as f:
-        scaler = pickle.load(f)
+    scaler_path = os.path.join(out_dir, 'scaler.pkl')
+    scaler = None
+    if os.path.exists(scaler_path):
+        with open(scaler_path, 'rb') as f:
+            scaler = pickle.load(f)
 
     print(f"Carregado de '{out_dir}':")
     print(f"  X_tabular : {X_scaled.shape}")

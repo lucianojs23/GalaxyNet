@@ -16,23 +16,28 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 from data_loader import download_sdss_galaxy_data, save_sdss_data
 
 # ─── Parâmetros da busca ───────────────────────────────────────────────────────
+# Modo all-sky: RA_CENTER, DEC_CENTER e RADIUS_DEG = None → busca em todo o footprint SDSS
+# Para busca por cone: definir RA_CENTER, DEC_CENTER (graus) e RADIUS_DEG (graus)
 
-
-RA_CENTER   = 180.0   # graus — centro do campo de busca
-DEC_CENTER  =   0.0   # graus
-RADIUS_DEG  =   2.0   # graus
-MAX_RECORDS = 1000    # TOP 1000 para teste inicial (trocar para 5000 na versão final)
+RA_CENTER   = None    # None = busca em todo o céu SDSS
+DEC_CENTER  = None    # None = busca em todo o céu SDSS
+RADIUS_DEG  = None    # None = sem restrição espacial
+MAX_RECORDS = 50000   # Número máximo de galáxias a baixar
 
 print("=" * 60)
 print("GalaxyNet — Download de dados do SDSS DR17")
 print("=" * 60)
-print(f"  RA center  : {RA_CENTER}°")
-print(f"  Dec center : {DEC_CENTER}°")
-print(f"  Radius     : {RADIUS_DEG}°")
+if RA_CENTER is not None:
+    print(f"  Modo       : Cone")
+    print(f"  RA center  : {RA_CENTER}°")
+    print(f"  Dec center : {DEC_CENTER}°")
+    print(f"  Radius     : {RADIUS_DEG}°")
+else:
+    print(f"  Modo       : All-sky (todo o footprint SDSS)")
 print(f"  Max records: {MAX_RECORDS}")
 print("=" * 60)
 print("Iniciando query SQL no servidor SDSS...")
-print("(pode levar alguns minutos \n")
+print("(pode levar alguns minutos)\n")
 
 # ─── Download ─────────────────────────────────────────────────────────────────
 df = download_sdss_galaxy_data(

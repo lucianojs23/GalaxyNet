@@ -1,0 +1,4 @@
+Model,Accuracy,F1 Macro,F1 Weighted,Compl. Elliptical,Reliab. Elliptical,Compl. Irregular,Reliab. Irregular,Compl. Spiral,Reliab. Spiral
+MLP,0.865,0.632,0.884,0.899,0.986,0.564,0.210,0.711,0.598
+CNN,0.901,0.620,0.898,0.961,0.948,0.205,0.229,0.667,0.714
+Hybrid,0.931,0.700,0.926,0.973,0.965,0.231,0.750,0.817,0.742

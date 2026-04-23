@@ -94,7 +94,7 @@ cd GalaxyNet
 ### 2. Criar e ativar o ambiente virtual
 
 ```bash
-python -m venv galaxy_env
+python3 -m venv galaxy_env
 source galaxy_env/bin/activate   # Linux/macOS
 # galaxy_env\Scripts\activate    # Windows
 ```
@@ -162,9 +162,10 @@ galaxy_classification/
 │   ├── processed/              # merged_catalog.csv, arrays .npy, scaler.pkl
 │   └── images/                 # <objid>.npy (64x64x3, float32, bandas g,r,i)
 │
-├── models/                     # Modelos treinados (.h5), LabelEncoder, test data
+├── models/                     # Modelos treinados (.h5), LabelEncoder, scaler, test data
 └── reports/
-    └── figures/                # Figuras fig01–fig25 (.png, .csv)
+    ├── fig01_* … fig06_*.png   # Figuras da EDA
+    └── figures/                # fig07–fig26 (.png, .csv)
 ```
 
 ---
@@ -226,7 +227,7 @@ python load_gz2_and_merge.py
    - Entradas classificadas como `Uncertain` sao removidas
 4. Salva o catalogo mesclado
 
-**Saida:** `data/processed/merged_catalog.csv` (~156 galaxias, 33 colunas)
+**Saida:** `data/processed/merged_catalog.csv` (9.054 galaxias, 33 colunas)
 
 ---
 
@@ -268,8 +269,8 @@ jupyter notebook notebooks/01_eda.ipynb
 Exploracao detalhada do catalogo mesclado:
 
 1. **Estatisticas descritivas** — resumo numerico de todas as colunas
-2. **Distribuicao de classes** — grafico de barras e pizza mostrando o
-   desbalanceamento severo: Elliptical ~86%, Spiral ~11%, Irregular ~3%
+2. **Distribuicao de classes** — grafico de barras mostrando o
+   desbalanceamento severo: Elliptical 83,9%, Spiral 13,2%, Irregular 2,9%
 3. **Distribuicao de redshift** — histograma geral e por classe
 4. **Indices de cor** — calcula `u-g`, `g-r`, `r-i`, `i-z` e indice de
    concentracao `C = petroR90_r / petroR50_r`
@@ -281,8 +282,10 @@ Exploracao detalhada do catalogo mesclado:
 
 **Figuras geradas:** `fig01` a `fig06` em `reports/figures/`
 
-**Insight principal:** galaxias Elliptical tem `g-r` medio de 0.94, Spiral
-0.68 e Irregular 0.82 — forte separacao por indice de cor.
+**Insight principal:** as medianas de `g-r` por classe sao 0,93 (Elliptical),
+0,86 (Irregular) e 0,71 (Spiral). Entre as features tabulares derivadas, o
+indice de concentracao `C = R90/R50` e o discriminador individual mais
+eficaz, com medianas 2,97 (Elliptical), 2,70 (Irregular) e 2,27 (Spiral).
 
 ---
 
@@ -322,12 +325,12 @@ de galaxias RGB por classe.
 
 | Arquivo | Shape | Descricao |
 |---|---|---|
-| `X_tabular.npy` | `(156, 15)` | Features tabulares normalizadas |
-| `y_labels.npy` | `(156,)` | Labels como string |
-| `objids.npy` | `(156,)` | Object IDs alinhados |
-| `scaler.pkl` | — | StandardScaler ajustado |
-| `X_images.npy` | `(156, 64, 64, 3)` | Imagens preprocessadas |
-| `img_objids.npy` | `(156,)` | Object IDs das imagens |
+| `X_tabular.npy` | `(9054, 15)` | Features tabulares normalizadas |
+| `y_labels.npy` | `(9054,)` | Labels como string |
+| `objids.npy` | `(9054,)` | Object IDs alinhados |
+| `scaler.pkl` | — | StandardScaler ajustado (tambem copiado em `models/`) |
+| `X_images.npy` | `(9054, 64, 64, 3)` | Imagens preprocessadas |
+| `img_objids.npy` | `(9054,)` | Object IDs das imagens |
 
 **Figuras geradas:** `fig07` a `fig15`
 
@@ -445,6 +448,14 @@ decisao do modelo:
 - **Spiral**: ativacao nos bracos espirais e regioes de formacao estelar
 - **Irregular**: ativacao dispersa e assimetrica
 
+**Analise de erros (fig26):**
+
+O notebook tambem seleciona exemplos representativos de galaxias mal
+classificadas pelo Hibrido e mostra, para cada uma, a imagem RGB e o
+desvio padronizado de cada feature tabular em relacao a media da classe
+prevista. A figura ajuda a inspecionar casos de ambiguidade entre
+morfologia visual e fotometria tabular.
+
 **Artefatos salvos:**
 
 | Arquivo | Descricao |
@@ -454,6 +465,7 @@ decisao do modelo:
 | `fig20_hybrid_training_curves.png` | Curvas de treinamento |
 | `fig17_hybrid_confusion_matrix.png` | Matriz de confusao |
 | `fig21_hybrid_gradcam.png` | Grid de Grad-CAM por classe |
+| `fig26_misclassified_galaxies.png` | Galaxias mal classificadas + features |
 
 ---
 
@@ -559,10 +571,10 @@ equivalentes a Recall e Precision respectivamente.
 
 | Classe | N | Fracao |
 |---|---|---|
-| Elliptical | ~135 | ~86% |
-| Spiral | ~17 | ~11% |
-| Irregular | ~4 | ~3% |
-| **Total** | **~156** | **100%** |
+| Elliptical | 7.595 | 83,9% |
+| Spiral | 1.198 | 13,2% |
+| Irregular | 261 | 2,9% |
+| **Total** | **9.054** | **100%** |
 
 ### Desbalanceamento
 
@@ -571,7 +583,8 @@ O dataset apresenta desbalanceamento severo. Estrategias adotadas:
 - **Data augmentation**: expande artificialmente o conjunto de treino (CNN/Hybrid)
 - **Split estratificado**: mantem proporcoes em todos os conjuntos
 
-SMOTE nao e viavel como estrategia primaria — Irregular possui apenas 4 amostras.
+SMOTE nao foi adotado como estrategia primaria dada a dimensao ainda
+reduzida da classe Irregular.
 
 ### Origem dos dados
 
@@ -585,12 +598,12 @@ SMOTE nao e viavel como estrategia primaria — Irregular possui apenas 4 amostr
 
 ## Figuras Geradas
 
-O pipeline produz 25 figuras ao longo dos 6 notebooks:
+O pipeline produz 26 figuras ao longo dos 6 notebooks:
 
 | Fig | Notebook | Descricao |
 |---|---|---|
-| 01–06 | 01_eda | Distribuicoes, diagramas cor-magnitude, correlacoes |
-| 07–15 | 02_preprocessing | Features derivadas, comparacao de stretch, grid de galaxias |
+| 01–06 | 01_eda | Distribuicoes, diagramas cor-magnitude, correlacoes, velDisp vs redshift |
+| 07–15 | 02_preprocessing | Features derivadas, matriz de correlacao 15x15, comparacao de stretch, grid de galaxias |
 | 16 | 03_mlp | Curvas de treinamento MLP |
 | 17 | 03/04/05 | Matrizes de confusao (uma por modelo) |
 | 18 | 04_cnn | Exemplos de data augmentation |
@@ -601,8 +614,10 @@ O pipeline produz 25 figuras ao longo dos 6 notebooks:
 | 23 | 06_comparison | Completeness/Reliability por classe e modelo |
 | 24 | 06_comparison | Confusion matrices side-by-side (MLP vs CNN vs Hybrid) |
 | 25 | 06_comparison | Accuracy e F1 por modelo |
+| 26 | 05_hybrid | Galaxias mal classificadas + desvio das features tabulares |
 
-Todas as figuras sao salvas automaticamente em `reports/figures/`.
+As figuras da EDA sao salvas em `reports/` (fig01–fig06) e as demais em
+`reports/figures/` (fig07–fig26).
 
 ---
 

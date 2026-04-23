@@ -29,8 +29,10 @@ IMAGES_DIR  = os.path.join(BASE_DIR, "data", "images")
 
 # ─── Argumento opcional --max ─────────────────────────────────────────────────
 parser = argparse.ArgumentParser()
-parser.add_argument("--max", type=int, default=500,
-                    help="Número máximo de imagens a baixar (padrão: 500 para teste)")
+parser.add_argument("--max", type=int, default=None,
+                    help="Número máximo de imagens a baixar (padrão: None = todas)")
+parser.add_argument("--workers", type=int, default=4,
+                    help="Número de threads paralelas para download (padrão: 4)")
 args = parser.parse_args()
 
 print("=" * 60)
@@ -45,7 +47,8 @@ if not os.path.exists(CATALOG_CSV):
 
 catalog_df = pd.read_csv(CATALOG_CSV)
 print(f"Catálogo carregado: {len(catalog_df)} galáxias")
-print(f"Baixando até {args.max} imagens (bandas g, r, i — 64x64 pixels)\n")
+n_download = args.max if args.max is not None else len(catalog_df)
+print(f"Baixando até {n_download} imagens (bandas g, r, i — 64x64 pixels)\n")
 
 # ─── Download em lote ─────────────────────────────────────────────────────────
 successful = download_images_batch(
@@ -53,7 +56,8 @@ successful = download_images_batch(
     images_dir  = IMAGES_DIR,
     size_pixels = 64,
     band_list   = ['g', 'r', 'i'],
-    max_images  = args.max
+    max_images  = args.max,
+    n_workers   = args.workers
 )
 
 print(f"\nImagens salvas em: {IMAGES_DIR}")

@@ -25,13 +25,13 @@ def create_mlp_model(input_shape, num_classes):
     model = keras.Sequential([
         layers.Input(shape=(input_shape,)),
         layers.Dense(256, activation='relu'),
-        layers.BatchNormalization(),
+        layers.BatchNormalization(momentum=0.9),
         layers.Dropout(0.3),
         layers.Dense(128, activation='relu'),
-        layers.BatchNormalization(),
+        layers.BatchNormalization(momentum=0.9),
         layers.Dropout(0.3),
         layers.Dense(64, activation='relu'),
-        layers.BatchNormalization(),
+        layers.BatchNormalization(momentum=0.9),
         layers.Dropout(0.2),
         layers.Dense(num_classes, activation='softmax'),
     ])
@@ -66,32 +66,32 @@ def create_cnn_model(input_shape=(64, 64, 3), num_classes=3):
 
         # Block 1
         layers.Conv2D(32, (3, 3), activation='relu', padding='same'),
-        layers.BatchNormalization(),
+        layers.BatchNormalization(momentum=0.9),
         layers.MaxPooling2D((2, 2)),
         layers.Dropout(0.25),
 
         # Block 2
         layers.Conv2D(64, (3, 3), activation='relu', padding='same'),
-        layers.BatchNormalization(),
+        layers.BatchNormalization(momentum=0.9),
         layers.MaxPooling2D((2, 2)),
         layers.Dropout(0.25),
 
         # Block 3
         layers.Conv2D(128, (3, 3), activation='relu', padding='same'),
-        layers.BatchNormalization(),
+        layers.BatchNormalization(momentum=0.9),
         layers.MaxPooling2D((2, 2)),
         layers.Dropout(0.25),
 
         # Block 4
         layers.Conv2D(256, (3, 3), activation='relu', padding='same'),
-        layers.BatchNormalization(),
+        layers.BatchNormalization(momentum=0.9),
         layers.MaxPooling2D((2, 2)),
         layers.Dropout(0.25),
 
         # Classifier head
         layers.Flatten(),
         layers.Dense(512, activation='relu'),
-        layers.BatchNormalization(),
+        layers.BatchNormalization(momentum=0.9),
         layers.Dropout(0.5),
         layers.Dense(num_classes, activation='softmax'),
     ])
@@ -128,46 +128,46 @@ def create_hybrid_model(tabular_shape, image_shape=(64, 64, 3), num_classes=3):
     image_input = layers.Input(shape=image_shape, name='image_input')
 
     x = layers.Conv2D(32, (3, 3), activation='relu', padding='same')(image_input)
-    x = layers.BatchNormalization()(x)
+    x = layers.BatchNormalization(momentum=0.9)(x)
     x = layers.MaxPooling2D((2, 2))(x)
     x = layers.Dropout(0.25)(x)
 
     x = layers.Conv2D(64, (3, 3), activation='relu', padding='same')(x)
-    x = layers.BatchNormalization()(x)
+    x = layers.BatchNormalization(momentum=0.9)(x)
     x = layers.MaxPooling2D((2, 2))(x)
     x = layers.Dropout(0.25)(x)
 
     x = layers.Conv2D(128, (3, 3), activation='relu', padding='same')(x)
-    x = layers.BatchNormalization()(x)
+    x = layers.BatchNormalization(momentum=0.9)(x)
     x = layers.MaxPooling2D((2, 2))(x)
     x = layers.Dropout(0.25)(x)
 
     x = layers.Conv2D(256, (3, 3), activation='relu', padding='same')(x)
-    x = layers.BatchNormalization()(x)
+    x = layers.BatchNormalization(momentum=0.9)(x)
     x = layers.MaxPooling2D((2, 2))(x)
     x = layers.Dropout(0.25)(x)
 
     x = layers.Flatten()(x)
     x = layers.Dense(256, activation='relu')(x)
-    x = layers.BatchNormalization()(x)
+    x = layers.BatchNormalization(momentum=0.9)(x)
     cnn_out = layers.Dropout(0.5)(x)
 
     # ── MLP branch (tabular features) ───────────────────────────────────────
     tabular_input = layers.Input(shape=(tabular_shape,), name='tabular_input')
 
     t = layers.Dense(128, activation='relu')(tabular_input)
-    t = layers.BatchNormalization()(t)
+    t = layers.BatchNormalization(momentum=0.9)(t)
     t = layers.Dropout(0.3)(t)
 
     t = layers.Dense(64, activation='relu')(t)
-    t = layers.BatchNormalization()(t)
+    t = layers.BatchNormalization(momentum=0.9)(t)
     mlp_out = layers.Dropout(0.3)(t)
 
     # ── Fusion ───────────────────────────────────────────────────────────────
     merged = layers.Concatenate()([cnn_out, mlp_out])
 
     f = layers.Dense(128, activation='relu')(merged)
-    f = layers.BatchNormalization()(f)
+    f = layers.BatchNormalization(momentum=0.9)(f)
     f = layers.Dropout(0.5)(f)
 
     output = layers.Dense(num_classes, activation='softmax', name='output')(f)

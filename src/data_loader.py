@@ -13,22 +13,34 @@ import os
 # Download de Dados Fotométricos e Espectroscópicos do SDSS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def download_sdss_galaxy_data(ra_center, dec_center, radius_deg,
+def download_sdss_galaxy_data(ra_center=None, dec_center=None, radius_deg=None,
                                max_records=5000):
     """
     Downloads photometric and spectroscopic data for galaxies from SDSS DR17.
 
+    Se ra_center, dec_center e radius_deg forem fornecidos, a busca é
+    restrita a um cone no céu. Caso contrário, busca em todo o footprint
+    espectroscópico do SDSS (modo all-sky).
+
     Args:
-        ra_center  (float): Right Ascension of the center of the search area (degrees).
-        dec_center (float): Declination of the center of the search area (degrees).
-        radius_deg (float): Radius of the search area (degrees).
-        max_records  (int): Maximum number of records to retrieve.
+        ra_center  (float|None): Right Ascension of the center (degrees). None = all-sky.
+        dec_center (float|None): Declination of the center (degrees). None = all-sky.
+        radius_deg (float|None): Radius of the search area (degrees). None = all-sky.
+        max_records      (int): Maximum number of records to retrieve.
 
     Returns:
         pd.DataFrame: DataFrame containing the downloaded galaxy data.
     """
+    # Filtro espacial apenas se todos os parâmetros forem fornecidos
+    use_cone = all(v is not None for v in (ra_center, dec_center, radius_deg))
+
+    spatial_filter = ""
+    if use_cone:
+        spatial_filter = f"""
+        dbo.fDistanceArcMinEq(p.ra, p.dec, {ra_center}, {dec_center}) < {radius_deg * 60} AND"""
+
     query = f"""
-    SELECT
+    SELECT TOP {max_records}
         p.objid, p.ra, p.dec,
         p.u, p.g, p.r, p.i, p.z,
         p.petroRad_r, p.petroR50_r, p.petroR90_r,
@@ -41,11 +53,14 @@ def download_sdss_galaxy_data(ra_center, dec_center, radius_deg,
     JOIN SpecObj AS s ON s.bestobjid = p.objid
     WHERE
         p.clean = 1 AND
-        p.r BETWEEN 14.0 AND 19.5 AND
+        p.r BETWEEN 14.0 AND 17.77 AND
         s.z BETWEEN 0.02 AND 0.25 AND
-        s.zWarning = 0 AND
-        dbo.fDistanceArcMinEq(p.ra, p.dec, {ra_center}, {dec_center}) < {radius_deg * 60}
+        s.zWarning = 0 AND{spatial_filter}
+        s.class = 'GALAXY'
     """
+
+    mode = f"cone ({ra_center}, {dec_center}, r={radius_deg}°)" if use_cone else "all-sky"
+    print(f"Querying SDSS DR17 [{mode}] — TOP {max_records}...")
 
     result = SDSS.query_sql(query)
 
@@ -303,15 +318,36 @@ def download_galaxy_image_cutout(ra, dec, objid, size_pixels=64,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Download em lote com tqdm
+# Download em lote com tqdm (paralelo via ThreadPoolExecutor)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _download_one(args):
+    """Worker function para download paralelo de uma única galáxia."""
+    ra, dec, objid, out_path, size_pixels, band_list = args
+
+    if os.path.exists(out_path):
+        return objid, True  # já existe
+
+    img = download_galaxy_image_cutout(
+        ra=ra, dec=dec, objid=objid,
+        size_pixels=size_pixels, band_list=band_list
+    )
+
+    if img is not None:
+        np.save(out_path, img)
+        return objid, True
+    else:
+        return objid, False
+
+
 def download_images_batch(catalog_df, images_dir, size_pixels=64,
-                           band_list=['g', 'r', 'i'], max_images=None):
+                           band_list=['g', 'r', 'i'], max_images=None,
+                           n_workers=4):
     """
     Baixa imagens FITS para todas as galáxias do catálogo em lote,
     salvando cada imagem como arquivo .npy em images_dir.
     Pula imagens já existentes para evitar downloads repetidos.
+    Usa ThreadPoolExecutor para downloads paralelos.
 
     Args:
         catalog_df  (pd.DataFrame): Catálogo com colunas 'objid', 'ra', 'dec'.
@@ -319,43 +355,43 @@ def download_images_batch(catalog_df, images_dir, size_pixels=64,
         size_pixels       (int): Tamanho do cutout em pixels.
         band_list        (list): Bandas fotométricas a baixar.
         max_images        (int): Limite de imagens (None = todas).
+        n_workers         (int): Número de threads paralelas (padrão: 4).
 
     Returns:
         list: Lista de objids com download bem-sucedido.
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     os.makedirs(images_dir, exist_ok=True)
 
     df = catalog_df.copy()
     if max_images is not None:
         df = df.head(max_images)
 
+    # Preparar argumentos para cada download
+    tasks = []
+    for _, row in df.iterrows():
+        objid    = int(row['objid'])
+        out_path = os.path.join(images_dir, f"{objid}.npy")
+        tasks.append((float(row['ra']), float(row['dec']), objid,
+                       out_path, size_pixels, band_list))
+
     successful = []
     failed     = []
 
-    print(f"Iniciando download de até {len(df)} imagens em '{images_dir}'...")
-    print("(Imagens já existentes serão puladas)\n")
+    print(f"Iniciando download de até {len(tasks)} imagens em '{images_dir}'...")
+    print(f"(Workers paralelos: {n_workers} | Imagens já existentes serão puladas)\n")
 
-    for _, row in tqdm(df.iterrows(), total=len(df), desc="Baixando imagens"):
-        objid    = int(row['objid'])
-        out_path = os.path.join(images_dir, f"{objid}.npy")
+    with ThreadPoolExecutor(max_workers=n_workers) as executor:
+        futures = {executor.submit(_download_one, t): t[2] for t in tasks}
 
-        if os.path.exists(out_path):
-            successful.append(objid)
-            continue
-
-        img = download_galaxy_image_cutout(
-            ra=float(row['ra']),
-            dec=float(row['dec']),
-            objid=objid,
-            size_pixels=size_pixels,
-            band_list=band_list
-        )
-
-        if img is not None:
-            np.save(out_path, img)
-            successful.append(objid)
-        else:
-            failed.append(objid)
+        for future in tqdm(as_completed(futures), total=len(futures),
+                           desc="Baixando imagens"):
+            objid, ok = future.result()
+            if ok:
+                successful.append(objid)
+            else:
+                failed.append(objid)
 
     print(f"\n✓ Download concluído:")
     print(f"  Bem-sucedidos : {len(successful)}")
